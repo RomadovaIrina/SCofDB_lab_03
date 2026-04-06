@@ -30,41 +30,125 @@ _TODO: Укажите не менее 3 запросов, которые вы с
 4. почему запрос медленный.
 
 ### Запрос №1
-_TODO_
+1. ```SELECT id, user_id, total_amount, created_at
+FROM orders
+WHERE status = 'paid'
+  AND total_amount > 3000
+  AND id IN (
+      SELECT order_id
+      FROM order_items
+      WHERE price > 500
+  )
+ORDER BY created_at DESC
+LIMIT 20;```
+2. План:
+- Seq Scan on orders
+- Seq Scan on order_items
+- Hash Semi Join
+- Sort (top-N heapsort)
+
+3. Execution Time: 81.365 ms
+4. в orders было просмотрено 100000 строк (см п1), из них `Rows Removed by Filter: 57657` 57657 отброшено;
+в order_items смотрели 400000 строк (см п1), из них `Rows Removed by Filter: 199175`
+ 199175 отброшено.
+Из-за полного сканирования и сортировки запрос выполняется заметно дольше тк без индексов последовательное сканирование обеих таблиц.
 
 ### Запрос №2
-_TODO_
+1. ```FROM orders
+WHERE status = 'paid'
+AND created_at >= TIMESTAMP '2025-01-01'
+AND created_at < TIMESTAMP '2025-03-01'
+ORDER BY created_at DESC
+LIMIT 20;```
+
+2. План:
+- Seq Scan on orders
+- Sort (top-N heapsort)
+
+3. Execution Time: 6.739 ms
+4.  В orders было просмотрено 100000 строк, из них `Rows Removed by Filter: 95861`, то есть 95861 строк было отброшено.
+Под условие подошло только 4139 строк. Сначала полное сканирование таблицы orders, а затем сртировка найденных строки. При увеличении объема данных стоимость такого запроса будет расти.
 
 ### Запрос №3
-_TODO_
+1. ```FROM orders o
+JOIN order_items oi ON oi.order_id = o.id
+WHERE o.status = 'paid'
+GROUP BY o.id
+ORDER BY order_sum DESC
+LIMIT 20;```
 
+2. План:
+- Seq Scan on orders
+- Seq Scan on order_items
+- Hash Join
+- HashAggregate
+- Sort (top-N heapsort)
+
+3. Execution Time: 161.305 ms
+4. В orders было просмотрено 100000 строк, из них `Rows Removed by Filter: 50021`, то есть 50021 строк было отброшено.
+   В order_items было просмотрено 400000 строк. После этого Hash Join, и HashAggregate для группировки по o.id, а затем сортировку по вычисляемому значению order_sum. Запрос тяжелый потому что сочетает сразу несколько дорогих операций: соединение таблиц, агрегацию, вычисление суммы и сортировку по агрегату.
+
+
+### Запрос №4
+
+1. ```EXPLAIN (ANALYZE, BUFFERS)
+SELECT
+    SUM(total_amount) AS total_,
+    COUNT(*) AS orders_count
+FROM orders 
+WHERE status = 'paid'
+  AND created_at >= TIMESTAMP '2025-01-01'
+  AND created_at < TIMESTAMP '2025-03-01'; ```
+
+2. План:
+- Seq Scan on orders
+- Aggregate
+
+3.  Execution Time: 6.654 ms
+
+4. В orders было просмотрено 100000 строк, из них `Rows Removed by Filter: 95861`, то есть 95861 строк было отброшено. Запрос не оптимален, тк вычисления SUM и COUNT идет полное сканирование таблицы orders вместо чтения только нужного диапазона данных.
+   
 ## 3. Добавленные индексы и обоснование типа
 _TODO: Для каждого добавленного индекса опишите, почему выбран именно этот тип (`BTREE`, `BRIN`, `GIN`, partial и т.д.)._
 
 ### Индекс №1
-- SQL: _TODO_
-- Какой запрос ускоряет: _TODO_
-- Почему выбран тип: _TODO_
+- SQL: ```CREATE INDEX idx_orders_status_created_at
+    ON orders USING BTREE (status, created_at DESC);```
+- Какой запрос ускоряет: Q2
+- Почему выбран тип: BTREE, потому что он лучше всего подходит для сравнений и как следствие сортировки. В данном случае индекс эффективен для поиска по status, отбора по диапазону дат и выдачи строк в нужном порядке по created_at DESC
 
 ### Индекс №2
-- SQL: _TODO_
-- Какой запрос ускоряет: _TODO_
-- Почему выбран тип: _TODO_
+- SQL: ```CREATE INDEX idx_order_items_price
+    ON order_items USING BTREE (order_id, price);```
+- Какой запрос ускоряет: Q1
+- Почему выбран тип: BTREE эффективен для поиска по order_id и для операций сравнения по price. Составной индекс (order_id, price) позволяет использовать его для поиска позиций заказа фильтрации по цене.
 
 ### Индекс №3
-- SQL: _TODO_
-- Какой запрос ускоряет: _TODO_
-- Почему выбран тип: _TODO_
+- SQL: ```CREATE INDEX idx_order_items_order_id
+    ON order_items USING BTREE (order_id);```
+- Какой запрос ускоряет: Q3
+- Почему выбран тип: BTREE эффективен для операций сравнения и JOIN по ключу (там как раз равенство проверяется). Такой индекс позволяет быстрее находить все строки order_items, по заказу.
+
+### Индекс №4
+- SQL: ```CREATE INDEX idx_only_paid_created_at
+    ON orders USING BTREE (created_at DESC)
+    WHERE status = 'paid';```
+- Какой запрос ускоряет: Q4
+- Почему выбран тип: частичный индекс на основе BTREE. Частичный индекс потому, что  запросы работают только с заказами в статусе paid, поэтому нет смысла индексировать все строки таблицы orders. Такой индекс занимает меньше места и может работать быстрее.
 
 ## 4. Замеры до/после индексов
 _TODO: Заполните таблицу или список сравнений._
 
 | Запрос | До ускорений | После индексов | После партиций |
 |--------|---------------|----------------|------------------------|
-| Q1 | 1 ms | 2 ms | **3 ms** |
-| Q2 | 1 ms | 2 ms | **3 ms** |
-| Q3 | 1 ms | 2 ms | **3 ms** |
-| Q4 || 1 ms | 2 ms | **3 ms** |
+| Q1 | 86.365 ms | **0.205 ms** | 0.347 ms |
+| Q2 | 6.292  ms | 6.314 ms | **0.112 ms** |
+| Q3 | **173.019 ms** | 173.431 ms | 182.039 ms |
+| Q4 || 6.654 ms | 2.528 ms | **1.706 ms** |
+
+
+Для каждых запросов были некоторые шатания по времени, но в итоге после нескольких прогонов ускорились 1,2,4 запросы. 3 не ускорился и иногда (например как выше) давал значения хуже чем до индексов.
+
 
 ## 5. Партиционирование `orders` по дате
 ### 5.1 Выбранная стратегия
