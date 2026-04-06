@@ -30,7 +30,8 @@ _TODO: Укажите не менее 3 запросов, которые вы с
 4. почему запрос медленный.
 
 ### Запрос №1
-1.```SELECT id, user_id, total_amount, created_at
+1.```sql
+SELECT id, user_id, total_amount, created_at
 FROM orders
 WHERE status = 'paid'
   AND total_amount > 3000
@@ -54,7 +55,8 @@ LIMIT 20;```
 Из-за полного сканирования и сортировки запрос выполняется заметно дольше тк без индексов последовательное сканирование обеих таблиц.
 
 ### Запрос №2
-1.```FROM orders
+1.```sql
+FROM orders
 WHERE status = 'paid'
 AND created_at >= TIMESTAMP '2025-01-01'
 AND created_at < TIMESTAMP '2025-03-01'
@@ -70,7 +72,8 @@ LIMIT 20;```
 Под условие подошло только 4139 строк. Сначала полное сканирование таблицы orders, а затем сртировка найденных строки. При увеличении объема данных стоимость такого запроса будет расти.
 
 ### Запрос №3
-1.```FROM orders o
+1.```sql
+FROM orders o
 JOIN order_items oi ON oi.order_id = o.id
 WHERE o.status = 'paid'
 GROUP BY o.id
@@ -91,7 +94,8 @@ LIMIT 20;```
 
 ### Запрос №4
 
-1.```EXPLAIN (ANALYZE, BUFFERS)
+1.```sql
+EXPLAIN (ANALYZE, BUFFERS)
 SELECT
     SUM(total_amount) AS total_,
     COUNT(*) AS orders_count
